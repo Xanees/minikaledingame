@@ -55,6 +55,16 @@ safe-buffer/index.js:
   #equip .lbl{font-size:12px;opacity:.7}
   #left{flex:none}
   #right{width:270px;display:flex;flex-direction:column;min-height:0}
+  #cmbtn{margin:0 0 8px;padding:6px 8px;border-radius:7px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.1);color:#fff;font-size:12px;cursor:pointer}
+  #cmbtn.on{background:rgba(255,213,74,.25);border-color:#ffd54a}
+  #cre{display:none;flex-direction:column;gap:6px;min-height:0}
+  #cre .tools{display:flex;flex-wrap:wrap;gap:4px}
+  #cre .tools button,#cre .spw button{padding:5px 7px;border-radius:6px;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.1);color:#fff;font-size:11.5px;cursor:pointer}
+  #cre .tools button.on{background:rgba(255,213,74,.3);border-color:#ffd54a}
+  #cre .spw{display:flex;gap:4px}#cre .spw select{flex:1;min-width:0;background:rgba(0,0,0,.4);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;font-size:12px}
+  #cre input{width:100%;box-sizing:border-box;padding:6px 8px;border-radius:6px;border:1px solid rgba(255,255,255,.25);background:rgba(0,0,0,.35);color:#fff;font-size:12px;outline:none;user-select:text;-webkit-user-select:text}
+  #cregrid{display:flex;flex-wrap:wrap;gap:3px;overflow-y:auto;min-height:0;max-height:300px;padding-right:4px}
+  #cregrid .slot{width:34px;height:34px}
   #stn{font-size:12px;opacity:.85;margin-bottom:6px}
   #crafts{overflow-y:auto;display:flex;flex-direction:column;gap:5px;min-height:0;padding-right:4px}
   .cr{display:flex;align-items:center;gap:8px;padding:5px 7px;border-radius:7px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);cursor:pointer;font-size:12px}
@@ -121,7 +131,9 @@ safe-buffer/index.js:
       <div id="equip"><span class="lbl">Броня</span><div id="aslot"></div><span class="lbl" style="margin-left:10px">Амулеты</span><div id="xslot0"></div><div id="xslot1"></div><span class="lbl" style="margin-left:10px">Корзина</span><div id="tslot"></div></div>
     </div>
     <div id="right">
-      <h3>Крафт</h3>
+      <h3 id="rh">Крафт</h3>
+      <button id="cmbtn"></button>
+      <div id="cre"></div>
       <div id="stn"></div>
       <div id="crafts"></div>
     </div>
@@ -139,6 +151,7 @@ safe-buffer/index.js:
   <button id="solo" class="alt">Играть одному</button>
   <label for="code">Онлайн: код комнаты (латиницей, у друга такой же)</label>
   <input id="code" maxlength="30" value="mir" autocomplete="off" autocapitalize="off">
+  <label style="display:flex;align-items:center;gap:8px;opacity:1;cursor:pointer;margin-top:14px"><input type="checkbox" id="cm" style="width:auto"> 🎨 Творческий режим (бессмертие, полёт, все предметы)</label>
   <label>Сервер связи — у обоих игроков должен быть один и тот же</label>
   <div id="srvs"></div>
   <div class="row2"><button id="probe" class="alt">Проверить серверы</button><button id="rooms" class="alt">Открытые комнаты</button></div>
@@ -885,6 +898,7 @@ const buffs={swift:0,owl:0,skin:0};
 let sel=0, cursor=null, armorId=null, invDirty=true, panelOpen=false;
 let time=CYCLE*.08, dayLight=1, kills=0, paused=true, online=false, net=null, roomCode='', myName='Игрок', myColor=0;
 const mobs=[], drops=[], projs=[], parts=[], fx=[], ghostList=[], clouds=[];
+let creative=false, flying=false;
 let boss=null, mobIdN=1, spawnT=4, nearSt={bench:0,forge:0,anvil:0,alch:0}, stT=0;
 const keys={}, touch={left:0,right:0,jump:0};
 const mouse={x:0,y:0,down:false,btn:0,show:false,just:false};
@@ -1014,7 +1028,56 @@ function craft(r){
   const left=addItem(r[0],r[1]);if(left>0)dropItem(r[0],left,P.x,P.y);
   toast('Создано: '+IT[r[0]].name+(r[1]>1?' ×'+r[1]:''),1200);
 }
+let creBuilt=false,creFilter='';
+function setCreative(v){
+  creative=!!v;if(!creative)flying=false;
+  if(creative){P.hp=P.maxHp;toast('🎨 Творческий режим: бессмертие, полёт на F, все предметы в каталоге',3200)}
+  else toast('Творческий режим выключен',1500);
+  invDirty=true;
+}
+function giveItem(id,all){
+  const it=IT[id],n=all?it.stack:1,left=addItem(id,n);
+  if(left>=n)toast('Рюкзак полон',900);
+}
+function buildCreative(){
+  creBuilt=true;const box=$('cre');box.innerHTML='';
+  const tools=document.createElement('div');tools.className='tools';
+  const mkb=(txt,fn,id)=>{const b=document.createElement('button');b.textContent=txt;if(id)b.id=id;b.addEventListener('pointerdown',e=>{e.preventDefault();fn();invDirty=true});tools.appendChild(b);return b};
+  mkb('✈ Полёт (F)',()=>{flying=!flying});
+  mkb('☀ День',()=>{if(online)toast('В онлайне время общее',1500);else time=CYCLE*.12});
+  mkb('🌙 Ночь',()=>{if(online)toast('В онлайне время общее',1500);else time=CYCLE*.75});
+  mkb('🧹 Убрать мобов',()=>{mobs.length=0;boss=null;projs.length=0;$('boss').style.display='none'});
+  mkb('❤ Вылечить',()=>{P.hp=P.maxHp});
+  mkb('👑 Босс',()=>{if(!boss)spawnBoss()});
+  box.appendChild(tools);
+  const sp=document.createElement('div');sp.className='spw';
+  const sel2=document.createElement('select');
+  for(const t of MOB_IDS){if(t==='warden')continue;const o=document.createElement('option');o.value=t;o.textContent=MOB[t].n||t;sel2.appendChild(o)}
+  const sb=document.createElement('button');sb.textContent='Призвать';
+  sb.addEventListener('pointerdown',e=>{e.preventDefault();const m=newMob(sel2.value,P.x+P.face*70,P.y-10);mobs.push(m)});
+  sp.append(sel2,sb);box.appendChild(sp);
+  const inp=document.createElement('input');inp.placeholder='Поиск предмета...';inp.autocomplete='off';
+  inp.addEventListener('input',()=>{creFilter=inp.value.trim().toLowerCase();fillCreGrid()});box.appendChild(inp);
+  const grid=document.createElement('div');grid.id='cregrid';box.appendChild(grid);
+}
+function fillCreGrid(){
+  const grid=$('cregrid');grid.innerHTML='';
+  for(const id in IT){
+    const it=IT[id];if(creFilter&&!it.name.toLowerCase().includes(creFilter))continue;
+    const d=document.createElement('div');d.className='slot';
+    const c=document.createElement('canvas');c.width=c.height=16;c.getContext('2d').drawImage(icons[id],0,0);d.appendChild(c);
+    d.title=descr(id)+'\n(ЛКМ — стак, ПКМ — 1 шт.)';
+    d.addEventListener('pointerdown',e=>{e.preventDefault();e.stopPropagation();giveItem(id,e.button!==2)});
+    d.addEventListener('contextmenu',e=>e.preventDefault());
+    grid.appendChild(d);
+  }
+}
+$('cmbtn').addEventListener('pointerdown',e=>{e.preventDefault();setCreative(!creative)});
 function rebuildCrafts(){
+  const cb=$('cmbtn');cb.textContent=creative?'🎨 Творческий режим: ВКЛ (нажми, чтобы выключить)':'🎨 Включить творческий режим';cb.classList.toggle('on',creative);
+  $('rh').textContent=creative?'Творческий каталог':'Крафт';
+  $('cre').style.display=creative?'flex':'none';elCrafts.style.display=creative?'none':'flex';elStn.style.display=creative?'none':'block';
+  if(creative){if(!creBuilt){buildCreative();fillCreGrid()}return}
   elStn.innerHTML='Рядом: '+STNS.map(k=>`${STN_NAME[k]} ${nearSt[k]?'✅':'❌'}`).join(' · ');
   const rows=[];
   for(const r of RC){
@@ -1055,6 +1118,7 @@ addEventListener('keydown',e=>{
   if(e.code.startsWith('Digit')){const n=+e.code.slice(5);select(n===0?9:n-1)}
   if((e.code==='KeyI'||e.code==='Tab'||e.code==='KeyE')&&!e.repeat){togglePanel();e.preventDefault()}
   if(e.code==='KeyQ'&&!e.repeat)quickHeal();
+  if(e.code==='KeyF'&&!e.repeat&&creative&&!paused){flying=!flying;toast(flying?'✈ Полёт включён (W/S — вверх/вниз)':'Полёт выключен',1200)}
   if(e.code==='Escape'&&panelOpen)togglePanel(false);
   if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Tab'].includes(e.code))e.preventDefault();
 });
@@ -1146,7 +1210,7 @@ function killPlayer(){
   if(boss){const bi=mobs.findIndex(m=>m.boss);if(bi>=0)mobs.splice(bi,1);boss=null;$('boss').style.display='none';projs.length=0}
 }
 function hurtPlayer(dmg,fromX,src){
-  if(P.dead||P.inv>0)return;
+  if(P.dead||P.inv>0||creative)return;
   const d=Math.max(1,Math.round(dmg-armorDef()));
   P.hp-=d;P.inv=.8;P.sinceHit=0;
   const nokb=hasAcc('shield');const kbm=nokb?0:armorPerk()==='steady'?.4:1;
@@ -1156,7 +1220,7 @@ function hurtPlayer(dmg,fromX,src){
   if(P.hp<=0)killPlayer();
 }
 function directDamage(n){
-  if(P.dead)return;P.hp-=n;P.sinceHit=0;if(P.hp<=0){P.hp=0;killPlayer()}
+  if(P.dead||creative)return;P.hp-=n;P.sinceHit=0;if(P.hp<=0){P.hp=0;killPlayer()}
 }
 function healPlayer(n){P.hp=Math.min(P.maxHp,P.hp+n);floatText(P.x+5,P.y-4,'+'+n,'#7dff9a')}
 function respawn(){
@@ -1200,6 +1264,12 @@ function updatePlayer(dt){
     P.vx*=1-Math.min(1,4*dt);if(P.vy>70)P.vy=70;
     const k=(hasAcc('fire')?.2:1)*(armorPerk()==='fire'?.12:1);
     P.lavaT+=dt;if(P.lavaT>.2){P.lavaT=0;directDamage(Math.max(1,Math.round(7*k)));burst(P.x+5,P.y+10,'#ff8a2a',4)}
+  }
+  if(creative&&flying){
+    const up=(keys.Space||keys.KeyW||keys.ArrowUp||touch.jump)?1:0,dn=(keys.KeyS||keys.ArrowDown||keys.ShiftLeft)?1:0;
+    P.hook=null;P.gs=0;
+    P.vx+=clamp(dir*(keys.ControlLeft?420:230)-P.vx,-1400*dt,1400*dt);
+    P.vy+=clamp((dn-up)*(keys.ControlLeft?360:200)-P.vy,-1400*dt,1400*dt);
   }
   physics(P,dt);
   if(boxSolid(P.x,P.y,P.w,P.h))unstick(P);
@@ -1360,7 +1430,7 @@ function usePotionItem(s){
   if(P.potionCd>0){return false}
   if(it.heal){if(P.hp>=P.maxHp){warn('Здоровье полное');return false}healPlayer(it.heal);P.potionCd=it.type==='potion'?1.2:.6}
   else if(it.buff){buffs[it.buff]=it.dur;P.potionCd=.6;toast(it.name+': эффект активен')}
-  s.n--;if(s.n<=0)inv[sel]=null;invDirty=true;return true;
+  if(!creative){s.n--;if(s.n<=0)inv[sel]=null}invDirty=true;return true;
 }
 function quickHeal(){
   if(paused||P.dead)return;
@@ -1375,7 +1445,7 @@ function aimInfo(){
   return {pcx,pcy,mx:mw.x,my:mw.y,ux:dx/d,uy:dy/d,d,ang:Math.atan2(dy,dx)};
 }
 function digStep(it,a,dt){
-  const mult=1+(buffs.swift>0?.3:0)+(armorPerk()==='dig'?.12:0);
+  const mult=(1+(buffs.swift>0?.3:0)+(armorPerk()==='dig'?.12:0))*(creative?6:1);
   P.work=true;P.face=a.ux>=0?1:-1;P.aim=a.ang;
   // деревья, тайники
   const reach=Math.min(a.d,REACH);
@@ -1388,14 +1458,14 @@ function digStep(it,a,dt){
   const hit=rayHit(a.pcx,a.pcy,a.ux,a.uy,reach+it.rad*.4);
   if(!hit){P.digT=0;mine.p=0;return}
   const mid=matAtPx(hit.x+a.ux*2,hit.y+a.uy*2),m=MATS[mid];
-  if(m.tier>it.tier){warn('Слишком твёрдо для этого инструмента ('+m.name+')');mine.p=0;return}
+  if(m.tier>(creative?98:it.tier)){warn('Слишком твёрдо для этого инструмента ('+m.name+')');mine.p=0;return}
   if(it.dig==='shovel'&&!SOFT[mid]){warn(SOFTNAME);mine.p=0;return}
-  const interval=Math.max(.06,.2*m.hard/(it.spd*mult));
+  const interval=Math.max(creative?.03:.06,.2*m.hard/(it.spd*mult));
   P.digT+=dt;mine.p=Math.min(1,P.digT/interval);mine.x=hit.x;mine.y=hit.y;
   if(P.digT>=interval){
     P.digT=0;mine.p=0;
     const cx=hit.x+a.ux*it.rad*.45,cy=hit.y+a.uy*it.rad*.45,out={};
-    if(carveOp(cx,cy,it.rad,it.tier,it.dig==='shovel',out,false)){
+    if(carveOp(cx,cy,it.rad,creative?98:it.tier,it.dig==='shovel',out,false)){
       for(const k in out){
         const mm=MATS[k];if(!mm.drop)continue;
         P.yacc[k]=(P.yacc[k]||0)+out[k]/mm.yld*(it.dig==='shovel'?1.2:1);
@@ -1444,8 +1514,8 @@ function useItem(s,a,dt,fresh){
     P.face=a.ux>=0?1:-1;P.aim=a.ang;
     const ox=a.pcx+a.ux*8,oy=a.pcy+a.uy*8;
     if(w==='sling'||w==='xbow'){
-      if(countItem(it.ammo)<1){warn('Нет боеприпасов: '+IT[it.ammo].name);return}
-      removeItem(it.ammo,1);
+      if(!creative&&countItem(it.ammo)<1){warn('Нет боеприпасов: '+IT[it.ammo].name);return}
+      if(!creative)removeItem(it.ammo,1);
       const sp=w==='sling'?340:540;
       fireProj({x:ox,y:oy,vx:a.ux*sp,vy:a.uy*sp-(w==='sling'?40:0),r:3,dmg:it.dmg,gs:w==='sling'?.5:.05,kind:w==='sling'?'stone':'bolt',col:w==='sling'?'#a0a2ae':'#e8e0c0',life:2.2,trail:w==='xbow'?'#ffffff55':null});
     }else if(w==='staff'){
@@ -1460,7 +1530,7 @@ function useItem(s,a,dt,fresh){
   if(it.type==='thrown'){
     if(P.atkCd>0)return;P.atkCd=.5;
     fireProj({x:a.pcx,y:a.pcy-2,vx:a.ux*(160+Math.min(a.d,200)*1.2),vy:a.uy*(160+Math.min(a.d,200)*1.2)-60,r:4,dmg:it.dmg,rad:it.r,gs:1,kind:'pot',col:it.id==='pot'?'#a8503a':'#3a3a48',life:1.25});
-    s.n--;if(s.n<=0)inv[sel]=null;invDirty=true;P.face=a.ux>=0?1:-1;return;
+    if(!creative){s.n--;if(s.n<=0)inv[sel]=null}invDirty=true;P.face=a.ux>=0?1:-1;return;
   }
   if(it.type==='grapple'){
     if(!fresh||P.atkCd>0)return;P.atkCd=.3;P.face=a.ux>=0?1:-1;
@@ -1473,7 +1543,7 @@ function useItem(s,a,dt,fresh){
     if(P.useCd>0)return;P.useCd=.1;
     const d=Math.min(a.d,REACH),px=a.pcx+a.ux*d,py=a.pcy+a.uy*d;
     if(addOp(px,py,11,it.mat,false)){
-      s.n--;if(s.n<=0)inv[sel]=null;invDirty=true;if(boxSolid(P.x,P.y,P.w,P.h))unstick(P);
+      if(!creative){s.n--;if(s.n<=0)inv[sel]=null}invDirty=true;if(boxSolid(P.x,P.y,P.w,P.h))unstick(P);
     }
     P.work=true;return;
   }
@@ -1492,13 +1562,13 @@ function useItem(s,a,dt,fresh){
       if(objs.some(o=>Math.abs(o.x-x)<22&&Math.abs(o.y-yy)<14)){warn('Тут уже занято');return}
       placeObjAt(it.obj,x,yy+1,false);
     }
-    s.n--;if(s.n<=0)inv[sel]=null;invDirty=true;return;
+    if(!creative){s.n--;if(s.n<=0)inv[sel]=null}invDirty=true;return;
   }
   if(it.type==='potion'||it.type==='food'){if(!fresh)return;usePotionItem(s);return}
   if(it.type==='summon'){
     if(!fresh)return;
     if(boss){warn('Страж уже здесь');return}
-    spawnBoss();s.n--;if(s.n<=0)inv[sel]=null;invDirty=true;
+    spawnBoss();if(!creative){s.n--;if(s.n<=0)inv[sel]=null}invDirty=true;
   }
 }
 function updateUse(dt){
@@ -2683,7 +2753,7 @@ function newWorld(seed){
   addItem('pick0',1);addItem('blade0',1);addItem('torch',12);
   mobs.length=0;drops.length=0;projs.length=0;parts.length=0;fx.length=0;ghostList.length=0;clouds.length=0;boss=null;kills=0;mine.p=0;
   myLog='';myN=0;editsDirty=false;remotes.clear();remoteList.length=0;ghostMap.clear();meteorT=rnd(70,150);
-  cam.init=false;$('dead').style.display='none';$('boss').style.display='none';invDirty=true;
+  flying=false;cam.init=false;$('dead').style.display='none';$('boss').style.display='none';invDirty=true;
   unstick(P);
 }
 const menu=$('menu'),mnote=$('mnote'),nickEl=$('nick'),codeEl=$('code'),btnSolo=$('solo'),btnOnline=$('online');
@@ -2754,7 +2824,7 @@ $('rooms').addEventListener('click',async()=>{
   btn.disabled=false;
 });
 function closeMenu(){menu.style.display='none';paused=false}
-btnSolo.addEventListener('click',()=>{myName=pickName();myColor=0;newWorld((Math.random()*1e6)|0);closeMenu()});
+btnSolo.addEventListener('click',()=>{creative=$('cm').checked;myName=pickName();myColor=0;newWorld((Math.random()*1e6)|0);closeMenu()});
 btnOnline.addEventListener('click',async()=>{
   btnOnline.disabled=btnSolo.disabled=true;mnote.textContent='Подключаюсь...';
   const code=(codeEl.value.toLowerCase().replace(/[^a-z0-9_.-]/g,'-').replace(/^[^a-z0-9]+/,'').slice(0,30))||'mir';
@@ -2772,7 +2842,7 @@ btnOnline.addEventListener('click',async()=>{
   roomCode=code;mnote.textContent='Генерирую мир...';
   await new Promise(r=>setTimeout(r,30));
   newWorld(hashStr(code));
-  net=n;online=true;
+  net=n;online=true;creative=$('cm').checked;
   if(net.onHit)net.onHit(applyRemoteHit);
   net.presence({name:myName,c:myColor,x:P.x,y:P.y,f:1,a:0,w:0,d:0,n:0,e:'',ar:'',hi:'',mb:[]}).catch(()=>{});
   closeMenu();
@@ -2799,7 +2869,7 @@ function frame(now){
     if(infoT<=0){
       infoT=.4;
       const b=biomeAtPx(P.x+5,P.y+12),dm=Math.round((P.y+12-surf[clamp(Math.round(P.x/CS),0,WC)]*CS)/16);
-      let t=`${BIO_NAME[b]} · ${dm>0?'глубина '+dm+' м':'высота '+(-dm)+' м'} · ${clockText()}<br>убито ${kills}`;
+      let t=`${creative?'🎨 ':''}${flying?'✈ ':''}${BIO_NAME[b]} · ${dm>0?'глубина '+dm+' м':'высота '+(-dm)+' м'} · ${clockText()}<br>убито ${kills}`;
       if(net){
         const cnt=net.peers().filter(p=>p.kind==='viewer').length;
         t+=` · 🌐 ${roomCode} · игроков: ${Math.max(1,cnt)}${net.status?' · '+net.status().map(x=>x.name+(x.ok?'✓':'✗')).join(' '):''}${net.connected()?'':' · ⚠ нет связи'}${cnt<2&&net.rx?' · принято '+net.rx():''}`;
