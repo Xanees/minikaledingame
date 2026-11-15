@@ -87,6 +87,15 @@ safe-buffer/index.js:
   #menu button{width:100%;margin-top:12px;padding:11px;border-radius:8px;border:0;font-size:15px;font-weight:600;cursor:pointer;color:#111;background:#ffd54a}
   #menu button.alt{background:rgba(255,255,255,.14);color:#fff}
   #menu button:disabled{opacity:.5;cursor:default}
+  #menu .row2{display:flex;gap:8px}#menu .row2 button{margin-top:8px;font-size:13px;padding:8px}
+  #srvs{display:flex;flex-direction:column;gap:4px}
+  #srvs label{display:flex;align-items:center;gap:8px;margin:0;padding:6px 8px;border-radius:8px;background:rgba(255,255,255,.07);opacity:1;font-size:13px;cursor:pointer}
+  #srvs input{width:auto;padding:0;margin:0}
+  #srvs .dot{width:9px;height:9px;border-radius:50%;background:#777;flex:none}
+  #srvs .dot.ok{background:#4cd964}#srvs .dot.bad{background:#ff5a5a}#srvs .ms{margin-left:auto;font-size:11px;opacity:.7}
+  #roomlist{margin-top:6px;display:flex;flex-direction:column;gap:4px}
+  #roomlist .rm{padding:7px 9px;border-radius:8px;background:rgba(255,213,74,.16);font-size:13px;cursor:pointer;display:flex;justify-content:space-between}
+  #roomlist .rm:hover{background:rgba(255,213,74,.3)}#roomlist .none{font-size:12px;opacity:.7}
   #menu p{font-size:12.5px;line-height:1.5;opacity:.8;margin:12px 0 0;min-height:36px}
 </style>
 </head>
@@ -130,6 +139,10 @@ safe-buffer/index.js:
   <button id="solo" class="alt">Играть одному</button>
   <label for="code">Онлайн: код комнаты (латиницей, у друга такой же)</label>
   <input id="code" maxlength="30" value="mir" autocomplete="off" autocapitalize="off">
+  <label>Сервер связи — у обоих игроков должен быть один и тот же</label>
+  <div id="srvs"></div>
+  <div class="row2"><button id="probe" class="alt">Проверить серверы</button><button id="rooms" class="alt">Открытые комнаты</button></div>
+  <div id="roomlist"></div>
   <button id="online">Играть онлайн</button>
   <p id="mnote">Игроки с одним кодом попадают в один мир. Код лучше взять необычный — комнаты публичные.</p>
 </div></div>
@@ -2538,11 +2551,22 @@ function applyRemoteHit(h){
 }
 
 /* ====================== MQTT-КЛИЕНТ (вне Claude) ====================== */
-const BROKERS=()=>window.MT_BROKERS||['wss://broker.emqx.io:8084/mqtt','wss://broker.hivemq.com:8884/mqtt','wss://test.mosquitto.org:8081'];
-function makeMqttNet(clients,code,myId){
-  const base='kaledin/v3/'+code, sTopic=base+'/s/'+myId, lTopic=base+'/l', hTopic=base+'/h';
-  const my={}, others=new Map(), seen=new Map(), seenU=new Set();
-  let list=[], lastState=0, hitFn=null;
+const BROKER_LIST=[
+  {name:'EMQX',url:'wss://broker.emqx.io:8084/mqtt'},
+  {name:'HiveMQ',url:'wss://broker.hivemq.com:8884/mqtt'},
+  {name:'Mosquitto',url:'wss://test.mosquitto.org:8081'},
+  {name:'Eclipse',url:'wss://mqtt.eclipseprojects.io:443/mqtt'}];
+let chosenSrv='auto';
+try{chosenSrv=localStorage.getItem('kd_srv')||'auto'}catch(e){}
+const BROKERS=()=>{
+  if(window.MT_BROKERS)return window.MT_BROKERS.map((u,i)=>({name:'S'+(i+1),url:u}));
+  const one=BROKER_LIST.find(b=>b.name===chosenSrv);
+  return one?[one]:BROKER_LIST;
+};
+function makeMqttNet(clients,names,code,myId){
+  const base='kaledin/v3/'+code, lobT='kaledin/v3/lobby/'+code, sTopic=base+'/s/'+myId, lTopic=base+'/l', hTopic=base+'/h';
+  const my={}, others=new Map(), seen=new Map(), seenU=new Set();let rx=0;
+  let list=[], lastState=0, lastLob=0, hitFn=null;
   const up=()=>clients.filter(c=>c.connected);
   const rebuild=()=>{list=[{peer:myId,isMe:true,kind:'viewer',presence:my},...[...others].map(([id,pr])=>({peer:id,isMe:false,kind:'viewer',presence:pr}))]};
   const okId=id=>/^[a-z0-9]{4,16}$/.test(id)&&id!==myId;
@@ -2567,7 +2591,7 @@ function makeMqttNet(clients,code,myId){
   const pub=(t,payload,retain)=>{for(const c of up()){try{c.publish(t,payload,{qos:0,retain:!!retain})}catch(e){}}};
   const publishState=()=>{lastState=Date.now();const s=Object.assign({},my);delete s.mb;pub(sTopic,JSON.stringify(s),true)};
   const onMsg=(topic,buf)=>{
-    let m;const txt=buf.length?buf.toString():'';
+    let m;rx++;const txt=buf.length?buf.toString():'';
     const parts=topic.split('/');
     if(topic===lTopic){
       try{m=JSON.parse(txt)}catch(e){return}
@@ -2594,9 +2618,10 @@ function makeMqttNet(clients,code,myId){
     const now=Date.now();
     for(const [id,t] of seen)if(now-t>12000){others.delete(id);seen.delete(id);rebuild()}
     if(up().length&&now-lastState>3000)publishState();
+    if(up().length&&now-lastLob>5000){lastLob=now;pub(lobT,JSON.stringify({c:code,n:my.name||'',p:Math.max(1,list.length),t:now}),true)}
   },1000);
-  const bye=()=>{try{clearInterval(timer);for(const c of clients){try{c.publish(sTopic,'',{qos:0,retain:true})}catch(e){}c.end(true)}}catch(e){}};
-  addEventListener('pagehide',bye);
+  const bye=()=>{try{clearInterval(timer);for(const c of clients){try{c.publish(sTopic,'',{qos:0,retain:true});if(list.length<=1)c.publish(lobT,'',{qos:0,retain:true})}catch(e){}c.end(true)}}catch(e){}};
+  addEventListener('pagehide',e=>{if(!e.persisted)bye()});
   rebuild();
   return {
     id:myId,
@@ -2615,25 +2640,27 @@ function makeMqttNet(clients,code,myId){
     peers:()=>list,
     connected:()=>up().length>0,
     servers:()=>up().length+'/'+clients.length,
+    status:()=>clients.map((c,i)=>({name:names[i],ok:!!c.connected})),
+    rx:()=>rx,
     role:'mqtt',
   };
 }
 async function mqttConnect(code,status){
   if(!window.mqtt)throw new Error('mqtt.js не загружен');
   const myId='p'+Math.random().toString(36).slice(2,10).replace(/[^a-z0-9]/g,'a');
-  const urls=BROKERS(),errors=[],clients=[];
+  const srv=BROKERS(),errors=[],clients=[],names=[];
   if(status)status('Подключаюсь к серверам связи...');
   await new Promise(res=>{
-    let left=urls.length,done=false;
+    let left=srv.length,done=false;
     const fin=()=>{if(!done){done=true;res()}};
-    for(const url of urls){
-      const host=url.replace(/^wss?:\/\//,'').split('/')[0];
+    for(const sv of srv){
+      const url=sv.url,host=sv.name;
       let c;
       try{
         c=window.mqtt.connect(url,{clientId:'kd_'+myId+'_'+clients.length,clean:true,keepalive:30,connectTimeout:7000,reconnectPeriod:2500,
           will:{topic:'kaledin/v3/'+code+'/s/'+myId,payload:'',retain:true,qos:0}});
       }catch(e){errors.push(host+': '+String((e&&e.message)||e).slice(0,50));if(--left<=0)fin();continue}
-      clients.push(c);
+      clients.push(c);names.push(sv.name);
       let first=true;
       c.on('connect',()=>{if(first){first=false;setTimeout(fin,1200)}});
       c.on('error',e=>{errors.push(host+': '+String((e&&e.message)||e).slice(0,50))});
@@ -2644,7 +2671,7 @@ async function mqttConnect(code,status){
     for(const c of clients){try{c.end(true)}catch(e){}}
     const err=new Error(errors.join(' | ')||'нет ответа от серверов');err.details=errors;throw err;
   }
-  return makeMqttNet(clients,code,myId);
+  return makeMqttNet(clients,names,code,myId);
 }
 
 /* ====================== НОВЫЙ МИР / МЕНЮ ====================== */
@@ -2668,6 +2695,64 @@ function pickName(){
   return n;
 }
 function hashStr(s){let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}return (h>>>0)&1048575}
+const srvsEl=$('srvs');
+function renderSrvs(res){
+  const rows=[{name:'auto',label:'Авто — все серверы сразу (лучше всего)'}].concat(BROKER_LIST.map(b=>({name:b.name,label:b.name})));
+  srvsEl.innerHTML='';
+  for(const r of rows){
+    const l=document.createElement('label');
+    const rd=document.createElement('input');rd.type='radio';rd.name='srv';rd.value=r.name;rd.checked=r.name===chosenSrv;
+    rd.onchange=()=>{chosenSrv=r.name;try{localStorage.setItem('kd_srv',chosenSrv)}catch(e){}};
+    const dot=document.createElement('span');dot.className='dot';
+    const t=document.createElement('span');t.textContent=r.label;
+    const ms=document.createElement('span');ms.className='ms';
+    const st=res&&res[r.name];
+    if(st){dot.classList.add(st.ok?'ok':'bad');ms.textContent=st.ok?st.ms+' мс':'недоступен'}
+    l.append(rd,dot,t,ms);srvsEl.append(l);
+  }
+}
+renderSrvs();
+function probeOne(b,ms=6000){
+  return new Promise(res=>{
+    const t0=performance.now();let c,done=false;
+    const fin=ok=>{if(done)return;done=true;try{c.end(true)}catch(e){}res({ok,ms:Math.round(performance.now()-t0)})};
+    try{c=window.mqtt.connect(b.url,{connectTimeout:ms,reconnectPeriod:0,clientId:'kdp_'+Math.random().toString(36).slice(2,9)})}catch(e){return res({ok:false,ms:0})}
+    c.on('connect',()=>fin(true));c.on('error',()=>fin(false));c.on('close',()=>fin(false));setTimeout(()=>fin(false),ms+500);
+  });
+}
+$('probe').addEventListener('click',async()=>{
+  if(!window.mqtt){mnote.textContent='mqtt.js не загружен — открой игру по ссылке на GitHub Pages.';return}
+  const btn=$('probe');btn.disabled=true;mnote.textContent='Проверяю серверы...';
+  const out={};
+  await Promise.all(BROKER_LIST.map(async b=>{out[b.name]=await probeOne(b)}));
+  renderSrvs(out);btn.disabled=false;
+  const ok=Object.keys(out).filter(k=>out[k].ok);
+  mnote.textContent=ok.length?'Доступно: '+ok.join(', ')+'. Если играете вдвоём — выберите один и тот же сервер (или «Авто»).':'Ни один сервер не отвечает — проверь интернет/VPN/блокировщик.';
+});
+$('rooms').addEventListener('click',async()=>{
+  const list=$('roomlist');
+  if(!window.mqtt){list.innerHTML='<div class="none">mqtt.js не загружен</div>';return}
+  const btn=$('rooms');btn.disabled=true;list.innerHTML='<div class="none">Ищу комнаты...</div>';
+  const found=new Map(),cs=[];
+  for(const b of BROKERS()){
+    try{
+      const c=window.mqtt.connect(b.url,{connectTimeout:6000,reconnectPeriod:0,clientId:'kdl_'+Math.random().toString(36).slice(2,9)});
+      cs.push(c);c.on('error',()=>{});
+      c.on('connect',()=>c.subscribe('kaledin/v3/lobby/+',{qos:0}));
+      c.on('message',(t,buf)=>{try{const m=JSON.parse(buf.toString());if(m&&typeof m.c==='string'&&Math.abs(Date.now()-m.t)<40000)found.set(m.c,{n:String(m.n||'').slice(0,12),p:m.p|0,s:b.name})}catch(e){}});
+    }catch(e){}
+  }
+  await new Promise(r=>setTimeout(r,3500));
+  for(const c of cs){try{c.end(true)}catch(e){}}
+  list.innerHTML='';
+  if(!found.size)list.innerHTML='<div class="none">Открытых комнат не найдено (комната видна, пока в ней кто-то играет).</div>';
+  for(const [code,r] of found){
+    const d=document.createElement('div');d.className='rm';d.innerHTML='<span></span><span></span>';
+    d.children[0].textContent=code+(r.n?' · '+r.n:'');d.children[1].textContent='👥 '+r.p;
+    d.onclick=()=>{codeEl.value=code;list.innerHTML=''};list.append(d);
+  }
+  btn.disabled=false;
+});
 function closeMenu(){menu.style.display='none';paused=false}
 btnSolo.addEventListener('click',()=>{myName=pickName();myColor=0;newWorld((Math.random()*1e6)|0);closeMenu()});
 btnOnline.addEventListener('click',async()=>{
@@ -2717,7 +2802,7 @@ function frame(now){
       let t=`${BIO_NAME[b]} · ${dm>0?'глубина '+dm+' м':'высота '+(-dm)+' м'} · ${clockText()}<br>убито ${kills}`;
       if(net){
         const cnt=net.peers().filter(p=>p.kind==='viewer').length;
-        t+=` · 🌐 ${roomCode} · игроков: ${Math.max(1,cnt)}${net.servers?' · серверов '+net.servers():''}${net.connected()?'':' · ⚠ нет связи'}`;
+        t+=` · 🌐 ${roomCode} · игроков: ${Math.max(1,cnt)}${net.status?' · '+net.status().map(x=>x.name+(x.ok?'✓':'✗')).join(' '):''}${net.connected()?'':' · ⚠ нет связи'}${cnt<2&&net.rx?' · принято '+net.rx():''}`;
       }
       $('info').innerHTML=t;
     }
