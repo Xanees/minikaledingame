@@ -600,7 +600,7 @@ function generate(seed){
       if((m===M.STONE||(b===7&&m===M.ASH))&&d0>8){
         const o=vn(i/4.2,j/4.2,S+61);
         if(o>(b===7?.74:.79)){
-          const h2=hash(i>>2,j>>2,S+62),al=[];
+          const h2=clamp((vn(i/11,j/11,S+63)-.3)/.4,0,.999),al=[];
           if(b===7){m=M.MAGMA}
           else{
             if(d0>8)al.push(M.COAL);
@@ -614,6 +614,13 @@ function generate(seed){
       if(i<5||i>WC-5||j>=HC-5)m=M.BEDROCK;
       mat[k]=m;bioN[k]=b;
     }
+  }
+  // убрать одиночные «горошины» руды
+  for(let j=1;j<HC-1;j++)for(let i=1;i<WC;i++){
+    const k=j*NS+i,m=mat[k];
+    if(m!==M.COAL&&m!==M.CUPRITE&&m!==M.FERRITE&&m!==M.ELECTRUM&&m!==M.LUMEN&&m!==M.MAGMA&&m!==M.OBSID&&m!==M.CLAY&&m!==M.ICE)continue;
+    if(mat[k-1]===m||mat[k+1]===m||mat[k-NS]===m||mat[k+NS]===m)continue;
+    mat[k]=m===M.CLAY?M.SOIL:m===M.ICE?M.FROST:(bioN[k]===7?M.ASH:M.STONE);
   }
   for(let i=0;i<=WC;i++)recomputeTop(i);
   // лава
@@ -1886,12 +1893,32 @@ function renderTerrain(cx,cy,ch){
     (lists[m]||(lists[m]=[])).push(i,j);
   }
   g.globalCompositeOperation='source-atop';
+  const FW=ni1-ni0+1,FH=nj1-nj0+1,IND=new Float32Array((FW+2)*(FH+2)),FF=new Float32Array(FW*FH);
   for(const m of OVR){
     const L=lists[m];if(!L)continue;
-    g.fillStyle=matPat[m];g.beginPath();
-    const base=ORES.has(m)?6.4:8.4;
-    for(let p=0;p<L.length;p+=2){const x=L[p]*CS,y=L[p+1]*CS,r=base+(hash(L[p],L[p+1],17)-.5)*1.5;g.moveTo(x+r,y);g.arc(x,y,r,0,6.2832)}
-    g.fill();
+    const IW=FW+2;IND.fill(0);
+    for(let p=0;p<L.length;p+=2)IND[(L[p+1]-nj0+1)*IW+(L[p]-ni0+1)]=1;
+    for(let j=0;j<FH;j++)for(let i=0;i<FW;i++){
+      const q=(j+1)*IW+i+1;
+      FF[j*FW+i]=(IND[q]*4+(IND[q-1]+IND[q+1]+IND[q-IW]+IND[q+IW])*2+IND[q-IW-1]+IND[q-IW+1]+IND[q+IW-1]+IND[q+IW+1])/16+(hash(i+ni0,j+nj0,m*7+3)-.5)*.1;
+    }
+    const mp=new Path2D(),TH=.31;
+    for(let j=0;j<FH-1;j++)for(let i=0;i<FW-1;i++){
+      V[0]=FF[j*FW+i];V[1]=FF[j*FW+i+1];V[2]=FF[(j+1)*FW+i+1];V[3]=FF[(j+1)*FW+i];
+      let n=0;for(let q=0;q<4;q++){S4[q]=V[q]>=TH;if(S4[q])n++}
+      if(!n)continue;
+      const x=(i+ni0)*CS,y=(j+nj0)*CS;
+      if(n===4){mp.rect(x-.3,y-.3,CS+.6,CS+.6);continue}
+      X[0]=x;X[1]=x+CS;X[2]=x+CS;X[3]=x;Y[0]=y;Y[1]=y;Y[2]=y+CS;Y[3]=y+CS;
+      let first=true;
+      for(let q=0;q<4;q++){
+        const q2=(q+1)&3;
+        if(S4[q]){if(first){mp.moveTo(X[q],Y[q]);first=false}else mp.lineTo(X[q],Y[q])}
+        if(S4[q]!==S4[q2]){const t=(TH-V[q])/(V[q2]-V[q]),px=X[q]+(X[q2]-X[q])*t,py=Y[q]+(Y[q2]-Y[q])*t;if(first){mp.moveTo(px,py);first=false}else mp.lineTo(px,py)}
+      }
+      mp.closePath();
+    }
+    g.fillStyle=matPat[m];g.fill(mp);
   }
   // внутренняя тень у края + контур
   const cp=new Path2D();for(const s of segs){cp.moveTo(s[0],s[1]);cp.lineTo(s[2],s[3])}
@@ -1904,7 +1931,7 @@ function renderTerrain(cx,cy,ch){
   for(const s of segs){
     if(s[5]>-.32)continue;
     const k=s[6],j=(k/NS)|0,i=k-j*NS,m=cellMat(k),b=bioN[k];
-    const sky=j<=topPx[i]/CS+4.5;
+    const sky=j<=topPx[i]/CS+2.2;
     let c1=null,c2=null;
     if(m===M.SOIL&&sky&&b===0){c1='#4aa63e';c2='#86d85a'}
     else if((m===M.SNOW||((m===M.FROST||m===M.SOIL)&&b===2))&&sky){c1='#f6faff';c2='#cfe2f6'}
@@ -2512,10 +2539,11 @@ function applyRemoteHit(h){
 
 /* ====================== MQTT-КЛИЕНТ (вне Claude) ====================== */
 const BROKERS=()=>window.MT_BROKERS||['wss://broker.emqx.io:8084/mqtt','wss://broker.hivemq.com:8884/mqtt','wss://test.mosquitto.org:8081'];
-function makeMqttNet(client,code,myId){
+function makeMqttNet(clients,code,myId){
   const base='kaledin/v3/'+code, sTopic=base+'/s/'+myId, lTopic=base+'/l', hTopic=base+'/h';
-  const my={}, others=new Map(), seen=new Map();
+  const my={}, others=new Map(), seen=new Map(), seenU=new Set();
   let list=[], lastState=0, hitFn=null;
+  const up=()=>clients.filter(c=>c.connected);
   const rebuild=()=>{list=[{peer:myId,isMe:true,kind:'viewer',presence:my},...[...others].map(([id,pr])=>({peer:id,isMe:false,kind:'viewer',presence:pr}))]};
   const okId=id=>/^[a-z0-9]{4,16}$/.test(id)&&id!==myId;
   const num=v=>typeof v==='number'&&isFinite(v);
@@ -2536,10 +2564,9 @@ function makeMqttNet(client,code,myId){
     others.set(id,Object.assign({},others.get(id)||{},clean));
     seen.set(id,Date.now());rebuild();
   };
-  const pub=(t,payload,retain)=>{try{client.publish(t,payload,{qos:0,retain:!!retain})}catch(e){}};
+  const pub=(t,payload,retain)=>{for(const c of up()){try{c.publish(t,payload,{qos:0,retain:!!retain})}catch(e){}}};
   const publishState=()=>{lastState=Date.now();const s=Object.assign({},my);delete s.mb;pub(sTopic,JSON.stringify(s),true)};
-  const subscribe=()=>{client.subscribe([base+'/s/+',lTopic,hTopic],{qos:0},err=>{if(!err)publishState()})};
-  client.on('message',(topic,buf)=>{
+  const onMsg=(topic,buf)=>{
     let m;const txt=buf.length?buf.toString():'';
     const parts=topic.split('/');
     if(topic===lTopic){
@@ -2547,29 +2574,35 @@ function makeMqttNet(client,code,myId){
       if(m&&typeof m.i==='string'&&okId(m.i))merge(m.i,m.p,false);
     }else if(topic===hTopic){
       try{m=JSON.parse(txt)}catch(e){return}
-      if(m&&m.t===myId&&num(m.m)&&num(m.d)&&num(m.k)&&hitFn)hitFn(m);
+      if(m&&m.t===myId&&num(m.m)&&num(m.d)&&num(m.k)&&hitFn){
+        if(typeof m.u==='string'){if(seenU.has(m.u))return;seenU.add(m.u);if(seenU.size>300)seenU.delete(seenU.values().next().value)}
+        hitFn(m);
+      }
     }else if(parts.length===5&&parts[3]==='s'){
       const id=parts[4];if(!okId(id))return;
       if(!txt){others.delete(id);seen.delete(id);rebuild();return}
       try{m=JSON.parse(txt)}catch(e){return}
       merge(id,m,true);
     }
-  });
-  client.on('connect',()=>{subscribe()});
-  if(client.connected)subscribe();
+  };
+  for(const c of clients){
+    const sub=()=>c.subscribe([base+'/s/+',lTopic,hTopic],{qos:0},err=>{if(!err)publishState()});
+    c.on('message',onMsg);c.on('connect',sub);if(c.connected)sub();
+    c.on('error',()=>{});
+  }
   const timer=setInterval(()=>{
     const now=Date.now();
     for(const [id,t] of seen)if(now-t>12000){others.delete(id);seen.delete(id);rebuild()}
-    if(client.connected&&now-lastState>3000)publishState();
+    if(up().length&&now-lastState>3000)publishState();
   },1000);
-  const bye=()=>{try{clearInterval(timer);client.publish(sTopic,'',{qos:0,retain:true});client.end(true)}catch(e){}};
+  const bye=()=>{try{clearInterval(timer);for(const c of clients){try{c.publish(sTopic,'',{qos:0,retain:true})}catch(e){}c.end(true)}}catch(e){}};
   addEventListener('pagehide',bye);
   rebuild();
   return {
     id:myId,
     presence(patch){
       Object.assign(my,patch);rebuild();
-      if(!client.connected)return Promise.resolve();
+      if(!up().length)return Promise.resolve();
       if('n' in patch||'e' in patch||'name' in patch||'c' in patch)publishState();
       if('x' in patch||'y' in patch||'f' in patch){
         const p={x:my.x,y:my.y,f:my.f,a:my.a,w:my.w,d:my.d,ar:my.ar,hi:my.hi,mb:my.mb};
@@ -2577,33 +2610,41 @@ function makeMqttNet(client,code,myId){
       }
       return Promise.resolve();
     },
-    sendHit(owner,mid,d,k){pub(hTopic,JSON.stringify({i:myId,t:owner,m:mid,d:Math.round(d),k}),false)},
+    sendHit(owner,mid,d,k){pub(hTopic,JSON.stringify({i:myId,t:owner,m:mid,d:Math.round(d),k,u:Math.random().toString(36).slice(2,10)}),false)},
     onHit(fn){hitFn=fn},
     peers:()=>list,
-    connected:()=>!!client.connected,
+    connected:()=>up().length>0,
+    servers:()=>up().length+'/'+clients.length,
     role:'mqtt',
   };
 }
 async function mqttConnect(code,status){
   if(!window.mqtt)throw new Error('mqtt.js не загружен');
   const myId='p'+Math.random().toString(36).slice(2,10).replace(/[^a-z0-9]/g,'a');
-  const errors=[];
-  for(const url of BROKERS()){
-    const host=url.replace(/^wss?:\/\//,'').split('/')[0];
-    if(status)status('Подключаюсь к '+host+'...');
-    try{
-      const client=await new Promise((res,rej)=>{
-        const c=window.mqtt.connect(url,{clientId:'kd_'+myId,clean:true,keepalive:30,connectTimeout:7000,reconnectPeriod:2000,
+  const urls=BROKERS(),errors=[],clients=[];
+  if(status)status('Подключаюсь к серверам связи...');
+  await new Promise(res=>{
+    let left=urls.length,done=false;
+    const fin=()=>{if(!done){done=true;res()}};
+    for(const url of urls){
+      const host=url.replace(/^wss?:\/\//,'').split('/')[0];
+      let c;
+      try{
+        c=window.mqtt.connect(url,{clientId:'kd_'+myId+'_'+clients.length,clean:true,keepalive:30,connectTimeout:7000,reconnectPeriod:2500,
           will:{topic:'kaledin/v3/'+code+'/s/'+myId,payload:'',retain:true,qos:0}});
-        const t=setTimeout(()=>{try{c.end(true)}catch(e){}rej(new Error('таймаут'))},7000);
-        c.once('close',()=>{if(!c.connected){clearTimeout(t);try{c.end(true)}catch(e){}rej(new Error('соединение закрыто'))}});
-        c.once('connect',()=>{clearTimeout(t);res(c)});
-        c.on('error',e=>{clearTimeout(t);try{c.end(true)}catch(_){}rej(e)});
-      });
-      return makeMqttNet(client,code,myId);
-    }catch(e){errors.push(host+': '+String((e&&e.message)||e).slice(0,60))}
+      }catch(e){errors.push(host+': '+String((e&&e.message)||e).slice(0,50));if(--left<=0)fin();continue}
+      clients.push(c);
+      let first=true;
+      c.on('connect',()=>{if(first){first=false;setTimeout(fin,1200)}});
+      c.on('error',e=>{errors.push(host+': '+String((e&&e.message)||e).slice(0,50))});
+    }
+    setTimeout(fin,8000);
+  });
+  if(!clients.some(c=>c.connected)){
+    for(const c of clients){try{c.end(true)}catch(e){}}
+    const err=new Error(errors.join(' | ')||'нет ответа от серверов');err.details=errors;throw err;
   }
-  const err=new Error(errors.join(' | '));err.details=errors;throw err;
+  return makeMqttNet(clients,code,myId);
 }
 
 /* ====================== НОВЫЙ МИР / МЕНЮ ====================== */
@@ -2676,7 +2717,7 @@ function frame(now){
       let t=`${BIO_NAME[b]} · ${dm>0?'глубина '+dm+' м':'высота '+(-dm)+' м'} · ${clockText()}<br>убито ${kills}`;
       if(net){
         const cnt=net.peers().filter(p=>p.kind==='viewer').length;
-        t+=` · 🌐 ${roomCode} · игроков: ${Math.max(1,cnt)}${net.connected()?'':' · ⚠ нет связи'}`;
+        t+=` · 🌐 ${roomCode} · игроков: ${Math.max(1,cnt)}${net.servers?' · серверов '+net.servers():''}${net.connected()?'':' · ⚠ нет связи'}`;
       }
       $('info').innerHTML=t;
     }
